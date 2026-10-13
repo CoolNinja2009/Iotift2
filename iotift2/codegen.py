@@ -27,6 +27,28 @@ def u(name):
     return name + '_'
 
 
+def bare(s):
+    """*s* without one pair of parentheses around the whole of it. `if ((a == b))` makes clang
+    warn (-Wparentheses-equality), so conditions are emitted through this."""
+    if not (s.startswith('(') and s.endswith(')')):
+        return s
+    depth, i = 0, 0
+    while i < len(s):
+        ch = s[i]
+        if ch in '"\'':                # skip a C++ string or char literal
+            i += 1
+            while i < len(s) and s[i] != ch:
+                i += 2 if s[i] == '\\' else 1
+        elif ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0 and i != len(s) - 1:
+                return s                # e.g. `(a) && (b)`: the first pair closes early
+        i += 1
+    return s[1:-1]
+
+
 def c_str(s):
     out = []
     for ch in s:
@@ -729,14 +751,14 @@ class CodeGen:
         elif isinstance(s, N.If):
             for i, (cond, body) in enumerate(s.branches):
                 kw = 'if' if i == 0 else '} else if'
-                e(f'{kw} ({self.expr(cond)}) {{')
+                e(f'{kw} ({bare(self.expr(cond))}) {{')
                 self.sub_block(body)
             if s.else_body is not None:
                 e('} else {')
                 self.sub_block(s.else_body)
             e('}')
         elif isinstance(s, N.While):
-            e(f'while ({self.expr(s.cond)}) {{')
+            e(f'while ({bare(self.expr(s.cond))}) {{')
             self.sub_block(s.body)
             e('}')
         elif isinstance(s, N.Loop):
@@ -847,9 +869,9 @@ class CodeGen:
                     wild = True
                     break
                 conds.append(self.pattern(p, name, subj_t))
-            cond = 'true' if wild else ' || '.join(f'({c})' for c in conds)
+            cond = 'true' if wild else conds[0] if len(conds) == 1 else ' || '.join(f'({c})' for c in conds)
             if arm.guard is not None:
-                cond = f'({cond}) && ({self.expr(arm.guard)})'
+                cond = f'({cond}) && ({bare(self.expr(arm.guard))})'
             # In an exhaustive match the last unguarded arm is the only one left:
             # make it a plain `else` so C++ sees every path covered.
             if arm is last_unguarded and not first:
@@ -857,7 +879,7 @@ class CodeGen:
             if wild and arm.guard is None:
                 e('else {' if not first else '{')
             else:
-                e(f'{"if" if first else "else if"} ({cond}) {{')
+                e(f'{"if" if first else "else if"} ({bare(cond)}) {{')
             self.sub_block(arm.body)
             e('}')
             first = False

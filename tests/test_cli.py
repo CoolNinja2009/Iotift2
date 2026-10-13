@@ -99,3 +99,11 @@ def test_declining_the_install_stops(monkeypatch):
     monkeypatch.setattr('builtins.input', lambda prompt: 'n')
     with pytest.raises(SystemExit):
         cli.ensure_pio()
+
+
+def test_conditions_have_no_doubled_parentheses():
+    """`if ((a == b))` is an error under clang's -Werror=parentheses (macOS CI); g++ does not mind."""
+    from iotift2.compiler import compile_source
+    src = (ROOT / 'examples' / 'two_cores.iot').read_text()
+    code = compile_source(src, str(ROOT / 'examples' / 'two_cores.iot'))
+    assert 'if ((' not in code and 'while ((' not in code
