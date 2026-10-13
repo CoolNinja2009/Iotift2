@@ -1,0 +1,31 @@
+-- The I2C bus through the Arduino Wire library, plus a bus scan.
+
+pub extern cpp "Wire.h" do
+    class TwoWire do
+        fn begin(mut self, sda: i32, scl: i32, freq: u32) -> bool blocking
+        fn beginTransmission(mut self, address: u8) as start
+        fn endTransmission(mut self) -> u8 as finish
+    end
+    var Wire: TwoWire as bus
+end
+
+pub const SDA: i32 = 21
+pub const SCL: i32 = 22
+
+-- True when a device acknowledges *address*.
+pub fn present(address: u8) -> bool do
+    bus.start(address)
+    return bus.finish() == 0
+end
+
+-- Starts the bus and prints every address that answers.
+pub fn scan() -> u8 do
+    var found: u8 = 0
+    for a in 1..127 do
+        if present(a as u8) do
+            println("i2c: device at 0x{a:X}")
+            found += 1
+        end
+    end
+    return found
+end

@@ -1,0 +1,47 @@
+-- Greenhouse monitor, split over three files:
+--   sensors/soil.iot   reads the soil probe
+--   lights/status.iot  drives a NeoPixel status light through the Adafruit library
+-- WiFi lives on core 0 and tells core 1 whether it is online through a shared var.
+
+device esp32
+
+use sensors.soil
+use lights.status
+
+pin pump = out 26
+
+shared var online: bool = false
+
+core 0 as network do
+    wifi home do
+        ssid: "Greenhouse"
+        password: "change-me-please"     -- in a real project: secret("WIFI_PASS")
+        hostname: "greenhouse-1"
+        retry: backoff(1s, max: 1min)
+    end
+
+    on home.connected do
+        online.set(true)
+        println("online at {home.ip}")
+    end
+
+    on home.lost do
+        online.set(false)
+        println("offline, reconnecting")
+    end
+end
+
+on boot do
+    status.begin()
+end
+
+every 2s do
+    let wet = soil.moisture()
+    if wet < soil.DRY_PERCENT do
+        pump.on()
+    else
+        pump.off()
+    end
+    status.show(wet, online.get())
+    println("soil {wet}% pump {pump.is_on()}")
+end

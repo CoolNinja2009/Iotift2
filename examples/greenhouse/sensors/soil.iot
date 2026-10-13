@@ -1,0 +1,14 @@
+-- Capacitive soil probe on an ADC1 pin (ADC2 is unavailable while WiFi is on).
+
+pin probe = adc 34
+
+const DRY_MV: u32 = 2800      -- reading in dry air
+const WET_MV: u32 = 1200      -- reading in water
+
+pub const DRY_PERCENT: u8 = 30
+
+-- Soil moisture from 0 (dry) to 100 (wet).
+pub fn moisture() -> u8 do
+    let mv = clamp(probe.read_mv(), WET_MV, DRY_MV)
+    return ((DRY_MV - mv) * 100 / (DRY_MV - WET_MV)) as u8
+end

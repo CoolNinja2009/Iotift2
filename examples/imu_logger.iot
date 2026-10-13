@@ -1,0 +1,148 @@
+-- Motion logger: an MPU6050 read over raw I2C registers (no driver library), a rolling
+-- average in a fixed array, a vibration alarm on a PWM buzzer, and WiFi in both modes:
+-- a setup access point and a station link that a task waits for with a timeout.
+
+device esp32
+
+extern cpp "Wire.h" do
+    class TwoWire do
+        fn begin(mut self, sda: i32, scl: i32, freq: u32) -> bool blocking
+        fn beginTransmission(mut self, address: u8) as start
+        fn write(mut self, value: u8) -> usize as put
+        fn endTransmission(mut self, stop: bool) -> u8 as finish
+        fn requestFrom(mut self, address: u8, count: usize, stop: bool) -> usize as request
+        fn read(mut self) -> i32 as take
+    end
+    var Wire: TwoWire as i2c
+end
+
+const MPU: u8 = 0x68
+const PWR_MGMT_1: u8 = 0x6B
+const ACCEL_XOUT_H: u8 = 0x3B
+const WINDOW: usize = 8
+
+pin buzzer = pwm 25, freq 2kHz, bits 8
+pin alarm_led = out 2
+
+struct Accel do
+    x: i16 = 0
+    y: i16 = 0
+    z: i16 = 0
+end
+
+var ok = false
+var history: [u32; 8]
+var slot: usize = 0
+var filled: usize = 0        -- samples in the window so far
+var alarms: u32 = 0
+
+wifi setup do
+    mode: ap
+    ssid: "Logger-Setup"
+    password: "logger1234"
+    channel: 6
+    max_clients: 2
+end
+
+wifi home do
+    ssid: "Workshop"
+    password: "workshop-pass"
+    retry: fixed(5s)
+end
+
+on setup.client_joined do
+    println("ap: client joined ({setup.clients} connected)")
+end
+
+on setup.client_left do
+    println("ap: client left ({setup.clients} connected)")
+end
+
+fn write_reg(reg: u8, value: u8) -> bool do
+    i2c.start(MPU)
+    i2c.put(reg)
+    i2c.put(value)
+    return i2c.finish(true) == 0
+end
+
+fn word() -> i16 do
+    let hi = i2c.take()
+    let lo = i2c.take()
+    return ((hi << 8) | lo) as i16
+end
+
+fn read_accel() -> Accel do
+    var a = Accel()
+    i2c.start(MPU)
+    i2c.put(ACCEL_XOUT_H)
+    if i2c.finish(false) != 0 do
+        return a
+    end
+    if i2c.request(MPU, 6, true) == 6 do
+        a.x = word()
+        a.y = word()
+        a.z = word()
+    end
+    return a
+end
+
+fn magnitude(a: Accel) -> u32 do
+    let x = a.x as i32
+    let y = a.y as i32
+    let z = a.z as i32
+    return sqrt((x * x + y * y + z * z) as f32) as u32
+end
+
+fn average() -> u32 do
+    var sum: u32 = 0
+    for v in history do
+        sum += v
+    end
+    return sum / WINDOW as u32
+end
+
+on boot do
+    i2c.begin(21, 22, 400000)
+    ok = write_reg(PWR_MGMT_1, 0)      -- wake the sensor
+    println("mpu6050 {if ok then "ready" else "missing"}")
+end
+
+every 20ms do
+    if not ok do
+        return
+    end
+    let m = magnitude(read_accel())
+    history[slot] = m
+    slot = (slot + 1) % WINDOW
+    if filled < WINDOW do
+        filled += 1
+        return                     -- no alarms until the average means something
+    end
+    let avg = average()
+    let shaking = m > avg + 4000 or m + 4000 < avg
+    if shaking do
+        alarms += 1
+        alarm_led.on()
+        buzzer.duty(50)
+    else
+        alarm_led.off()
+        buzzer.duty(0)
+    end
+end
+
+every 1s do
+    println("accel avg {average()} alarms {alarms}")
+end
+
+task uplink do
+    loop do
+        wait until home.connected timeout 20s
+        if home.connected do
+            println("uplink: online as {home.ip}")
+            wait until not home.connected
+            println("uplink: dropped")
+        else
+            println("uplink: no network after 20s, still logging locally")
+        end
+    end
+end

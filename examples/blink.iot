@@ -1,0 +1,4 @@
+-- The whole program: toggle the on-board LED twice a second.
+pin led = out 2
+
+every 500ms => led.toggle()

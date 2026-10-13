@@ -1,0 +1,36 @@
+-- One NeoPixel: green when the soil is fine, orange when dry, blue blink while offline.
+
+extern cpp "Adafruit_NeoPixel.h" from lib "adafruit/Adafruit NeoPixel@^1.12.0" do
+    const NEO_GRB: u16
+    const NEO_KHZ800: u16
+    class Adafruit_NeoPixel as Pixels do
+        new(count: u16, pin: i16, kind: u16)
+        fn begin(mut self)
+        fn setBrightness(mut self, level: u8) as brightness
+        fn setPixelColor(mut self, index: u16, rgb: u32) as set
+        fn show(mut self)
+    end
+end
+
+var light = Pixels(1, 5, NEO_GRB + NEO_KHZ800)
+var blink = false
+
+fn rgb(r: u8, g: u8, b: u8) -> u32 => (r as u32) << 16 | (g as u32) << 8 | b as u32
+
+pub fn begin() do
+    light.begin()
+    light.brightness(40)
+end
+
+pub fn show(moisture: u8, online: bool) do
+    var color = rgb(0, 160, 0)
+    if moisture < 30 do
+        color = rgb(255, 100, 0)
+    end
+    if not online do
+        blink = not blink
+        color = if blink then rgb(0, 0, 255) else 0
+    end
+    light.set(0, color)
+    light.show()
+end

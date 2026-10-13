@@ -1,0 +1,20 @@
+-- 128x64 SSD1306 OLED on I2C (Adafruit SSD1306 + GFX).
+
+pub extern cpp "Adafruit_SSD1306.h" from lib "adafruit/Adafruit SSD1306@^2.5.13" do
+    const SSD1306_SWITCHCAPVCC: u8
+    const SSD1306_WHITE: u16
+    class Adafruit_SSD1306 as Oled do
+        new(width: u8, height: u8)
+        fn begin(mut self, vcc: u8, address: u8) -> bool blocking
+        fn clearDisplay(mut self) as clear
+        fn setTextSize(mut self, size: u8) as text_size
+        fn setTextColor(mut self, color: u16) as text_color
+        fn setCursor(mut self, x: i16, y: i16) as cursor
+        fn print(mut self, text: str) as text
+        fn print(mut self, value: f32, digits: i32) as number
+        fn print(mut self, value: i32) as integer
+        fn drawRect(mut self, x: i16, y: i16, w: i16, h: i16, color: u16) as rect
+        fn fillRect(mut self, x: i16, y: i16, w: i16, h: i16, color: u16) as fill
+        fn display(mut self) blocking(max: 10ms) as flush
+    end
+end

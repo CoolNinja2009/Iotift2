@@ -1,0 +1,60 @@
+-- A thermostat: an NTC probe on an ADC pin, a PWM heater and a status LED.
+device esp32
+use c.math
+
+pin probe  = adc 34
+pin heater = pwm 25, freq 1kHz, bits 10
+pin status = out 2
+pin mode_button = in 0, pull up, debounce 40ms
+
+enum Mode do
+    off, eco, comfort
+end
+
+struct Reading do
+    celsius: f32
+    raw: u16
+end
+
+impl Reading do
+    fn too_cold(self, target: f32) -> bool => self.celsius < target - 0.5
+end
+
+const BETA = 3950.0
+var mode = Mode.eco
+var last = Reading(celsius: 0.0, raw: 0)
+
+fn target_for(m: Mode) -> f32 do
+    match m do
+        off => return 5.0
+        eco => return 18.0
+        comfort => return 21.5
+    end
+end
+
+fn to_celsius(raw: u16) -> f32 do
+    if raw == 0 or raw >= 4095 => return -273.0
+    let r = 10000.0 * (raw as f32) / (4095.0 - raw as f32)
+    let kelvin = 1.0 / (1.0 / 298.15 + math.log(r / 10000.0) / BETA)
+    return kelvin - 273.15
+end
+
+on mode_button.press do
+    match mode do
+        off => mode = Mode.eco
+        eco => mode = Mode.comfort
+        comfort => mode = Mode.off
+    end
+    println("mode: {mode}")
+end
+
+every 200ms do
+    let raw = probe.read()
+    last = Reading(celsius: to_celsius(raw), raw: raw)
+    let target = target_for(mode)
+    let error = target - last.celsius
+    heater.duty(clamp(error * 0.25, 0.0, 1.0))
+    status.set(last.too_cold(target))
+end
+
+every 5s => println("{last.celsius:.1} C (target {target_for(mode):.1}, mode {mode})")

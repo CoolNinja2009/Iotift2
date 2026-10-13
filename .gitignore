@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local Python environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# PlatformIO
+.pio/
+
+# Build outputs
+build/
+dist/
+*.o
+*.elf
+*.hex
+*.bin

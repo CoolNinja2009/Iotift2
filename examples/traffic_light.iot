@@ -1,0 +1,30 @@
+-- A traffic light as a task: each phase is a line, not a state table.
+-- A pedestrian button shortens the green phase.
+pin red    = out 25
+pin yellow = out 26
+pin green  = out 27
+pin walk   = in 4, pull up, debounce 25ms
+
+var request = false
+
+on walk.press => request = true
+
+fn show(r: bool, y: bool, g: bool) do
+    red.set(r)
+    yellow.set(y)
+    green.set(g)
+end
+
+task lights do
+    loop do
+        show(false, false, true)
+        wait until request timeout 20s
+        request = false
+        show(false, true, false)
+        wait 3s
+        show(true, false, false)
+        wait 10s
+        show(true, true, false)
+        wait 1500ms
+    end
+end

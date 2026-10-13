@@ -1,0 +1,28 @@
+-- Fast control on core 1, reporting on core 0. The compiler checks that
+-- each core only touches its own variables; `samples` is shared safely.
+pin led = out 2
+
+shared var samples: u32 = 0
+
+core 1 as control do
+    var phase: u8 = 0
+    every 10ms do
+        phase += 1
+        samples.add(1)
+        if phase == 50 do
+            led.toggle()
+            phase = 0
+        end
+    end
+end
+
+core 0 as network do
+    var reports: u32 = 0
+    task reporter do
+        loop do
+            wait 1s
+            reports += 1
+            println("report {reports}: {samples.get()} samples")
+        end
+    end
+end

@@ -1,0 +1,11 @@
+-- Bosch BME280 temperature / humidity / pressure sensor (Adafruit library).
+
+pub extern cpp "Adafruit_BME280.h" from lib "adafruit/Adafruit BME280 Library@^2.2.4" do
+    class Adafruit_BME280 as Bme280 do
+        new()
+        fn begin(mut self, address: u8) -> bool blocking
+        fn readTemperature(mut self) -> f32 blocking(max: 2ms) as temperature
+        fn readHumidity(mut self) -> f32 blocking(max: 2ms) as humidity
+        fn readPressure(mut self) -> f32 blocking(max: 2ms) as pressure
+    end
+end

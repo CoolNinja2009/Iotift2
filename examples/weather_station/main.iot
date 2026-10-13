@@ -1,0 +1,176 @@
+-- Weather station: a BME280 and an SSD1306 OLED on one I2C bus, WiFi on core 0.
+--
+-- core 1 (default): reads the sensor every 2s, keeps min/max, drives the OLED
+--                   and cycles screens with the button
+-- core 0:           runs WiFi and reports through shared vars
+
+device esp32
+
+use drivers.i2c (bus, SDA, SCL, scan, present)
+use drivers.bme280 (Bme280)
+use drivers.oled (Oled, SSD1306_SWITCHCAPVCC, SSD1306_WHITE)
+
+pin button = in 0, pull up, debounce 30ms
+pin led = out 2
+
+const BME_ADDR: u8 = 0x76
+const OLED_ADDR: u8 = 0x3C
+
+enum Screen do
+    now
+    range
+    network
+end
+
+struct Stats do
+    lo: f32 = 1000.0
+    hi: f32 = -1000.0
+    count: u32 = 0
+end
+
+impl Stats do
+    fn add(mut self, v: f32) do
+        self.lo = min(self.lo, v)
+        self.hi = max(self.hi, v)
+        self.count += 1
+    end
+end
+
+var sensor = Bme280()
+var screen = Oled(128, 64)
+
+var have_sensor = false
+var have_screen = false
+var page = Screen.now
+var temp: f32 = 0.0
+var humidity: f32 = 0.0
+var pressure: f32 = 0.0
+var temps = Stats()
+
+shared var online: bool = false
+shared var reconnects: u32 = 0
+
+core 0 as network do
+    wifi home do
+        ssid: "Workshop"
+        password: secret("WIFI_PASS")
+        hostname: "weather-1"
+        retry: backoff(1s, max: 30s)
+    end
+
+    on home.connected do
+        online.set(true)
+        println("wifi: up, ip {home.ip}, rssi {home.rssi}")
+    end
+
+    on home.lost do
+        online.set(false)
+        reconnects.add(1)
+        println("wifi: lost, retrying")
+    end
+
+    every 10s do
+        if home.connected do
+            println("wifi: still up, rssi {home.rssi}")
+        end
+    end
+end
+
+on boot do
+    bus.begin(SDA, SCL, 400000)
+    println("i2c: {scan()} device(s)")
+    have_sensor = sensor.begin(BME_ADDR)
+    have_screen = screen.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)
+    if not have_sensor do
+        println("bme280 not found at 0x{BME_ADDR:X}")
+    end
+    if not have_screen do
+        println("oled not found at 0x{OLED_ADDR:X}")
+    end
+end
+
+on button.press do
+    match page do
+        Screen.now => page = Screen.range
+        Screen.range => page = Screen.network
+        Screen.network => page = Screen.now
+    end
+    draw()
+end
+
+every 2s do
+    if have_sensor do
+        temp = sensor.temperature()
+        humidity = sensor.humidity()
+        pressure = sensor.pressure() / 100.0
+        temps.add(temp)
+        println("t={temp:.1}C h={humidity:.0}% p={pressure:.1}hPa")
+    end
+    draw()
+end
+
+-- Heartbeat: fast blink while offline, slow while online.
+task heartbeat do
+    loop do
+        led.on()
+        wait 50ms
+        led.off()
+        if online.get() do
+            wait 1950ms
+        else
+            wait 250ms
+        end
+    end
+end
+
+fn header(mut s: Oled, title: str) do
+    s.clear()
+    s.text_size(1)
+    s.text_color(SSD1306_WHITE)
+    s.cursor(0, 0)
+    s.text(title)
+    s.rect(0, 10, 128, 1, SSD1306_WHITE)
+end
+
+fn draw() do
+    if not have_screen do
+        return
+    end
+    match page do
+        Screen.now do
+            header(screen, "Now")
+            screen.text_size(2)
+            screen.cursor(0, 16)
+            screen.number(temp, 1)
+            screen.text(" C")
+            screen.cursor(0, 36)
+            screen.number(humidity, 0)
+            screen.text(" %")
+            screen.text_size(1)
+            screen.cursor(0, 56)
+            screen.number(pressure, 1)
+            screen.text(" hPa")
+        end
+        Screen.range do
+            header(screen, "Today")
+            screen.cursor(0, 16)
+            screen.text("min ")
+            screen.number(temps.lo, 1)
+            screen.cursor(0, 28)
+            screen.text("max ")
+            screen.number(temps.hi, 1)
+            screen.cursor(0, 40)
+            screen.text("samples ")
+            screen.integer(temps.count as i32)
+        end
+        Screen.network do
+            header(screen, "WiFi")
+            screen.cursor(0, 16)
+            screen.text(if online.get() then "online" else "offline")
+            screen.cursor(0, 28)
+            screen.text("reconnects ")
+            screen.integer(reconnects.get() as i32)
+        end
+    end
+    screen.flush()
+end

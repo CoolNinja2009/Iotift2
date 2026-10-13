@@ -1,0 +1,15 @@
+-- A task reads top to bottom. `wait` pauses only this task;
+-- the timer below keeps running while the task waits.
+pin led = out 2
+pin heartbeat = out 4
+
+task blink do
+    loop do
+        led.on()
+        wait 100ms
+        led.off()
+        wait 900ms
+    end
+end
+
+every 250ms => heartbeat.toggle()

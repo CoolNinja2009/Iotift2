@@ -1,0 +1,13 @@
+-- Count debounced button presses and show the count on Serial.
+pin button = in 0, pull up, debounce 30ms
+pin led = out 2
+
+var presses: u32 = 0
+
+on button.press do
+    presses += 1
+    led.on()
+    println("pressed {presses} times")
+end
+
+on button.release => led.off()
