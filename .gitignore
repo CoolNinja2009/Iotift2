@@ -31,3 +31,6 @@ dist/
 *.elf
 *.hex
 *.bin
+
+# Website (kept local, not published)
+web/
