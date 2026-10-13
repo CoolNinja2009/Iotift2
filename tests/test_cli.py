@@ -60,3 +60,42 @@ def test_typo_suggests_command(capsys):
     with pytest.raises(SystemExit):
         cli.main(['vuild', 'x.iot'])
     assert 'Did you mean `build`?' in capsys.readouterr().err
+
+
+def test_upload_installs_platformio_when_missing(monkeypatch, capsys):
+    """A first upload with no PlatformIO installs it (no prompt without a terminal) and carries on."""
+    installed = []
+    monkeypatch.setattr(cli, 'find_pio', lambda: ['pio'] if installed else None)
+    monkeypatch.setattr(cli, '_pip_install', lambda python, *extra: installed.append(python) or True)
+    monkeypatch.delenv('IOTIFT_NO_AUTO_INSTALL', raising=False)
+    assert cli.ensure_pio() == ['pio']
+    assert installed
+    assert 'PlatformIO is installed' in capsys.readouterr().out
+
+
+def test_platformio_falls_back_to_private_env(monkeypatch):
+    """When pip refuses the current Python (PEP 668), PlatformIO goes into ~/.platformio/penv."""
+    calls = []
+    monkeypatch.setattr(cli, 'find_pio', lambda: ['penv-pio'] if len(calls) > 1 else None)
+    monkeypatch.setattr(cli, '_pip_install', lambda python, *extra: calls.append(python) or len(calls) > 1)
+    monkeypatch.setattr(cli.subprocess, 'call', lambda cmd, **kw: 0)
+    monkeypatch.delenv('IOTIFT_NO_AUTO_INSTALL', raising=False)
+    assert cli.ensure_pio() == ['penv-pio']
+    assert 'penv' in calls[1]
+
+
+def test_auto_install_can_be_turned_off(monkeypatch):
+    monkeypatch.setattr(cli, 'find_pio', lambda: None)
+    monkeypatch.setenv('IOTIFT_NO_AUTO_INSTALL', '1')
+    with pytest.raises(SystemExit):
+        cli.ensure_pio()
+
+
+def test_declining_the_install_stops(monkeypatch):
+    monkeypatch.setattr(cli, 'find_pio', lambda: None)
+    monkeypatch.delenv('IOTIFT_NO_AUTO_INSTALL', raising=False)
+    monkeypatch.delenv('IOTIFT_YES', raising=False)
+    monkeypatch.setattr(cli.sys.stdin, 'isatty', lambda: True, raising=False)
+    monkeypatch.setattr('builtins.input', lambda prompt: 'n')
+    with pytest.raises(SystemExit):
+        cli.ensure_pio()

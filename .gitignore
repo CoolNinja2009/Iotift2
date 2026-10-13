@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+#claude
+.claude/
+
 # Test and coverage artifacts
 .pytest_cache/
 .coverage
@@ -34,3 +37,15 @@ dist/
 
 # Website (kept local, not published)
 web/
+*.egg-info/
+
+# PlatformIO projects written next to programs by `iotift project` / `iotift upload`
+*_pio/
+
+# Leftovers from moving files between machines
+*.bundle
+workflows-to-move/
+
+#random files
+blink.cpp
+ws.cpp
