@@ -1,4 +1,4 @@
-"""Command line: python -m iotift2 <command> ...
+"""Command line: iotift <command> ...  (or python -m iotift2 <command> ...)
 
   check   FILE                 type-check only
   build   FILE [-o OUT.cpp]    write C++ (default: FILE with .cpp)
@@ -6,7 +6,9 @@
   upload  FILE [--port P] [--monitor]
                                write the project, build it and upload it to a connected
                                board (port auto-detected); FILE may be .iot or .cpp.
-                               `flash` is the same command.
+                               `flash` is the same command. Installs PlatformIO first if it is missing.
+  setup   [--yes] [--skip-toolchain]
+                               install PlatformIO and the ESP32 toolchain, then look for boards
   sim     FILE [--ms N] [--events SPEC]
                                compile against the host simulator and run it
 """
@@ -33,7 +35,7 @@ BOARDS = {
     'esp32h2': 'esp32-h2-devkitm-1',
 }
 
-SIM_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tests', 'sim')
+SIM_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sim')
 
 
 def read(path):
@@ -104,23 +106,125 @@ def write_cpp_project(path, out_dir, board, chip='esp32'):
 
 def find_pio():
     """The PlatformIO command as an argv prefix, or None.
-    Looks on PATH, then in the VS Code extension's private env, then for `python -m platformio`."""
+    Looks on PATH, next to this Python, in the VS Code extension's private env, then for `python -m platformio`."""
     for name in ('pio', 'platformio'):
         exe = shutil.which(name)
         if exe:
             return [exe]
     scripts = 'Scripts' if os.name == 'nt' else 'bin'
-    for name in ('pio.exe', 'pio'):
-        exe = os.path.join(os.path.expanduser('~'), '.platformio', 'penv', scripts, name)
-        if os.path.isfile(exe):
-            return [exe]
+    names = ('pio.exe', 'pio') if os.name == 'nt' else ('pio',)
+    for folder in (os.path.dirname(sys.executable),
+                   os.path.join(os.path.dirname(sys.executable), scripts),
+                   os.path.join(PIO_HOME, 'penv', scripts)):
+        for name in names:
+            exe = os.path.join(folder, name)
+            if os.path.isfile(exe):
+                return [exe]
     try:
+        import importlib
         import importlib.util
+        importlib.invalidate_caches()
         if importlib.util.find_spec('platformio'):
             return [sys.executable, '-m', 'platformio']
     except (ImportError, ValueError):
         pass
     return None
+
+
+PIO_HOME = os.environ.get('PLATFORMIO_CORE_DIR') or os.path.join(os.path.expanduser('~'), '.platformio')
+
+
+def say(msg=''):
+    print(msg, flush=True)
+
+
+def ask_yes(question, assume_yes):
+    """True unless the user answers no. Never blocks when there is no terminal."""
+    if assume_yes or os.environ.get('IOTIFT_YES') or not sys.stdin or not sys.stdin.isatty():
+        return True
+    try:
+        answer = input(f'{question} [Y/n] ').strip().lower()
+    except EOFError:
+        return True
+    return answer in ('', 'y', 'yes')
+
+
+def _pip_install(python, *extra):
+    cmd = [python, '-m', 'pip', 'install', '--upgrade', '--disable-pip-version-check', *extra, 'platformio']
+    try:
+        return subprocess.call(cmd) == 0
+    except OSError:
+        return False
+
+
+def install_platformio(assume_yes=False):
+    """Install PlatformIO, the tool that builds and flashes ESP32 firmware. Returns its argv prefix or exits."""
+    say('PlatformIO (the tool that builds and flashes ESP32 firmware) is not installed yet.')
+    if os.environ.get('IOTIFT_NO_AUTO_INSTALL'):
+        say('IOTIFT_NO_AUTO_INSTALL is set, so it was not installed. Install it with:  python -m pip install platformio')
+        sys.exit(1)
+    if not ask_yes('Install it now? It is a one-time download of about 50 MB.', assume_yes):
+        say('Skipped. Install it later with `iotift setup` or `python -m pip install platformio`.')
+        sys.exit(1)
+    say('Installing PlatformIO...')
+    # 1. Into the Python that runs Iotift (the installer gives Iotift its own environment).
+    if _pip_install(sys.executable) and find_pio():
+        say('PlatformIO is installed.')
+        return find_pio()
+    # 2. Into PlatformIO's own environment in ~/.platformio/penv, the same place the VS Code
+    #    extension uses. This works where the system Python refuses pip installs (PEP 668).
+    penv = os.path.join(PIO_HOME, 'penv')
+    say(f'Trying a private environment in {penv} instead...')
+    python = os.path.join(penv, 'Scripts' if os.name == 'nt' else 'bin', 'python')
+    if subprocess.call([sys.executable, '-m', 'venv', penv]) == 0 and _pip_install(python):
+        pio = find_pio()
+        if pio:
+            say('PlatformIO is installed.')
+            return pio
+    say('Could not install PlatformIO automatically. Install it by hand with:\n'
+        '    python -m pip install platformio\n'
+        'or install the PlatformIO extension for VS Code, then run this command again.')
+    sys.exit(1)
+
+
+def ensure_pio(assume_yes=False):
+    return find_pio() or install_platformio(assume_yes)
+
+
+def toolchain_missing():
+    return not os.path.isdir(os.path.join(PIO_HOME, 'platforms', 'espressif32'))
+
+
+SETUP_PROGRAM = "pin led = out 2\n\nevery 500ms => led.toggle()\n"
+
+
+def setup(a):
+    """Get a machine ready to flash: PlatformIO, the ESP32 toolchain, and a look for boards."""
+    say(f'Iotift {__version__} on Python {sys.version.split()[0]}')
+    pio = ensure_pio(a.yes)
+    say(f'PlatformIO: {" ".join(pio)}')
+    if not a.skip_toolchain:
+        if toolchain_missing():
+            say('Downloading the ESP32 toolchain. This happens once and can take a few minutes...')
+        else:
+            say('Checking the ESP32 toolchain...')
+        work = tempfile.mkdtemp(prefix='iotift_setup_')
+        src = os.path.join(work, 'blink.iot')
+        with open(src, 'w', encoding='utf-8') as f:
+            f.write(SETUP_PROGRAM)
+        out_dir = write_project(src, os.path.join(work, 'blink_pio'), None)
+        if subprocess.call([*pio, 'run', '-d', out_dir]) != 0:
+            say('The test build failed; see the PlatformIO output above.')
+            sys.exit(1)
+        shutil.rmtree(work, ignore_errors=True)
+        say('ESP32 toolchain: ok (a test program built)')
+    ports = esp_ports(pio)
+    if ports:
+        for port, desc in ports:
+            say(f'Board found: {port}  {desc}')
+    else:
+        say('No ESP32 board is plugged in right now. That is fine; `iotift upload` finds it when it is.')
+    say('\nReady. Try:  iotift upload blink.iot')
 
 
 # USB vendor ids of the serial chips found on ESP32 boards, and Espressif's own native USB.
@@ -172,11 +276,10 @@ def upload(a):
     else:
         write_project(a.file, out_dir, a.board)
     print(f'wrote PlatformIO project in {out_dir}')
-    pio = find_pio()
-    if not pio:
-        print('PlatformIO is not installed. Install it with:  py -m pip install platformio', file=sys.stderr)
-        sys.exit(1)
+    pio = ensure_pio(a.yes)
     port = a.port or pick_port(pio)
+    if toolchain_missing():
+        print('First upload: PlatformIO downloads the ESP32 toolchain once. This can take a few minutes.')
     print(f'uploading to {port}')
     rc = subprocess.call([*pio, 'run', '-d', out_dir, '-t', 'upload', '--upload-port', port])
     if rc != 0 or not a.monitor:
@@ -185,7 +288,7 @@ def upload(a):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog='iotift2', description='Iotift 2 compiler for the ESP32')
+    ap = argparse.ArgumentParser(prog='iotift', description='Iotift 2 compiler for the ESP32')
     ap.add_argument('--version', action='version', version=f'iotift2 {__version__}')
     sub = ap.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('check')
@@ -205,10 +308,14 @@ def main(argv=None):
         p.add_argument('--board', help='PlatformIO board id (default picked from `device`)')
         p.add_argument('-p', '--port', help='serial port, e.g. COM5 or /dev/ttyUSB0 (default: auto-detect)')
         p.add_argument('-m', '--monitor', action='store_true', help='open the serial monitor after uploading')
+        p.add_argument('-y', '--yes', action='store_true', help='install PlatformIO without asking if it is missing')
+    p = sub.add_parser('setup', help='install PlatformIO and the ESP32 toolchain, then look for boards')
+    p.add_argument('-y', '--yes', action='store_true', help='do not ask before installing')
+    p.add_argument('--skip-toolchain', action='store_true', help='only install PlatformIO')
     p = sub.add_parser('sim')
     p.add_argument('file')
     p.add_argument('--ms', type=int, default=2000)
-    p.add_argument('--events', default='', help='e.g. "100:4:0,300:4:1" (see tests/sim/sim.cpp)')
+    p.add_argument('--events', default='', help='e.g. "100:4:0,300:4:1" (see iotift2/sim/sim.cpp)')
     p.add_argument('--core3', action='store_true', help='simulate Arduino-ESP32 core 3.x')
     args = sys.argv[1:] if argv is None else argv
     if args and not args[0].startswith('-') and args[0] not in sub.choices:
@@ -238,6 +345,8 @@ def main(argv=None):
         print(f'wrote PlatformIO project in {out_dir}')
     elif a.cmd in ('upload', 'flash'):
         upload(a)
+    elif a.cmd == 'setup':
+        setup(a)
     elif a.cmd == 'sim':
         cxx = shutil.which('g++') or shutil.which('clang++')
         if not cxx:

@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # examples/weather_station reads its WiFi password with secret("WIFI_PASS").
+  WIFI_PASS: ci-placeholder
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install pytest
+      - run: python -m pytest -q
+
+  windows:
+    name: Tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      # The simulator tests need a POSIX C++ toolchain; these cover the compiler and the CLI.
+      - run: python -m pytest -q tests/test_cli.py tests/test_checker.py tests/test_frontend.py
+
+  package:
+    name: Build the package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install the wheel and compile every example
+        run: |
+          python -m venv /tmp/v
+          /tmp/v/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/v/bin/iotift --version
+          for f in "$GITHUB_WORKSPACE"/examples/*.iot "$GITHUB_WORKSPACE"/examples/*/main.iot; do
+            /tmp/v/bin/iotift check "$f"
+          done
+          /tmp/v/bin/iotift sim "$GITHUB_WORKSPACE/examples/blink.iot" --ms 1100
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  installer-windows:
+    name: Installer (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run install.ps1
+        shell: powershell
+        env:
+          IOTIFT_FROM: ${{ github.workspace }}
+          IOTIFT_SKIP_SETUP: '1'
+        run: .\install.ps1
+      - name: iotift is on PATH in a new shell
+        shell: powershell
+        run: |
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
+          iotift --version
+          iotift build examples\blink.iot -o blink_test.cpp
+
+  installer-unix:
+    name: Installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run install.sh
+        env:
+          IOTIFT_FROM: ${{ github.workspace }}
+          IOTIFT_SKIP_SETUP: '1'
+        run: sh install.sh
+      - run: |
+          ~/.local/bin/iotift --version
+          ~/.local/bin/iotift build examples/blink.iot -o /tmp/blink.cpp
+
+  firmware:
+    name: Firmware builds with PlatformIO
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-v1
+      - run: python -m pip install .
+      # Installs PlatformIO on its own (the same path a new user takes) and builds a test program.
+      - run: iotift setup --yes
+      - name: Build every example for the ESP32
+        run: |
+          for f in examples/*.iot examples/*/main.iot; do
+            name=$(echo "$f" | tr '/.' '__')
+            echo "::group::$f"
+            iotift project "$f" -d "build/$name"
+            python -m platformio run -d "build/$name"
+            echo "::endgroup::"
+          done

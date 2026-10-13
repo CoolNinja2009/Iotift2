@@ -34,3 +34,4 @@ dist/
 
 # Website (kept local, not published)
 web/
+*.egg-info/

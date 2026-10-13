@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iotift2"
+dynamic = ["version"]
+description = "Iotift 2: a non-blocking, statically typed language for the ESP32"
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["esp32", "embedded", "compiler", "iot", "platformio", "arduino"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Software Development :: Embedded Systems",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# `pip install iotift2[platformio]` installs PlatformIO up front instead of on the first upload.
+platformio = ["platformio"]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/CoolNinja2009/Iotift2"
+Releases = "https://github.com/CoolNinja2009/Iotift2/releases"
+
+[project.scripts]
+iotift = "iotift2.cli:main"
+iotift2 = "iotift2.cli:main"
+
+[tool.setuptools]
+packages = ["iotift2"]
+
+[tool.setuptools.dynamic]
+version = { attr = "iotift2.__version__" }
+
+[tool.setuptools.package-data]
+iotift2 = ["sim/*", "sim/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

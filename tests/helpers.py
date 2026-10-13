@@ -1,5 +1,5 @@
 """Shared test helpers: compile Iotift 2 source, build it against the host
-simulator (tests/sim) and run it, so tests check behaviour, not text."""
+simulator (iotift2/sim) and run it, so tests check behaviour, not text."""
 
 import os
 import shutil
@@ -16,7 +16,7 @@ import pytest  # noqa: E402
 from iotift2.compiler import compile_source, check_source  # noqa: E402
 from iotift2.errors import CompileError  # noqa: E402
 
-SIM = Path(__file__).resolve().parent / 'sim'
+SIM = ROOT / 'iotift2' / 'sim'
 CXX = shutil.which('g++') or shutil.which('clang++')
 WORK = Path(tempfile.mkdtemp(prefix='iotift2_t_'))
 _SIM_OBJ = {}
